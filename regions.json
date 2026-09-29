@@ -1,0 +1,19 @@
+{
+  "kanaarid": ["LPA", "TFS", "TFN", "ACE", "FUE", "SPC"],
+  "baleaarid": ["PMI", "IBZ", "MAH"],
+  "portugal": ["LIS", "OPO", "FAO", "FNC", "PDL"],
+  "hispaania": ["BCN", "MAD", "AGP", "ALC", "VLC", "SVQ", "PMI", "IBZ"],
+  "itaalia": ["ROM", "MIL", "NAP", "VCE", "BLQ", "FLR", "PSA", "CTA", "PMO", "CAG", "OLB", "BRI"],
+  "kreeka": ["ATH", "HER", "CHQ", "RHO", "CFU", "JTR", "JMK", "KGS", "SKG", "ZTH"],
+  "kypros": ["LCA", "PFO"],
+  "malta": ["MLA"],
+  "horvaatia": ["ZAG", "SPU", "DBV", "ZAD", "PUY"],
+  "tyrgi": ["IST", "AYT", "DLM", "BJV", "ADB"],
+  "egiptus": ["HRG", "SSH", "CAI", "RMF"],
+  "prantsusmaa": ["PAR", "NCE", "LYS", "MRS", "BOD", "TLS"],
+  "alpid": ["GVA", "ZRH", "INN", "SZG", "MUC", "TRN", "LYS"],
+  "tai": ["BKK", "HKT", "USM", "CNX", "KBV"],
+  "araabia": ["DXB", "AUH", "DOH", "MCT"],
+  "london": ["LON"],
+  "usa_idarannik": ["NYC", "BOS", "WAS", "MIA"]
+}
