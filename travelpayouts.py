@@ -29,8 +29,11 @@ class TravelpayoutsClient:
         self.session = requests.Session()
         self.session.headers["X-Access-Token"] = token
 
-    def round_trips(self, origin: str, destination: str, month: str) -> list[dict]:
-        """Edasi-tagasi lennud, mille väljumine on antud kuus (YYYY-MM)."""
+    def round_trips(self, origin: str, destination: str, month: str, direct: bool = False) -> list[dict]:
+        """Edasi-tagasi lennud, mille väljumine on antud kuus (YYYY-MM); direct=True annab ainult otselende.
+
+        Iga lennujaamade ja kuupäevapaari kohta on vahemälus vaid odavaim pilet.
+        """
         results: list[dict] = []
         for page in range(1, MAX_PAGES + 1):
             params = {
@@ -38,6 +41,7 @@ class TravelpayoutsClient:
                 "destination": destination,
                 "departure_at": month,
                 "one_way": "false",
+                "direct": "true" if direct else "false",
                 "sorting": "price",
                 "currency": self.currency,
                 "limit": PAGE_LIMIT,

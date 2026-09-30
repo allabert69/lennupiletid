@@ -9,17 +9,23 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import os
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 from travelpayouts import TravelpayoutsClient, TravelpayoutsError
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_ORIGINS = ["TLL", "RIX", "HEL"]
+
+# Aviasalesi lingi t= parameeter kirjeldab konkreetset piletit: lennufirma (2 märki), siis iga suuna kohta
+# väljumine ja saabumine (kohalik aeg Unix-sekunditena), kestus minutites ja lennujaamad; lõpus _<räsi>_<hind>.
+TICKET_LEG = re.compile(r"(\d{10})(\d{10})(\d{6})((?:[A-Z]{3})+)")
 
 CSV_COLUMNS = [
     "price",
@@ -33,9 +39,15 @@ CSV_COLUMNS = [
     "nights",
     "duration_out_h",
     "duration_back_h",
+    "total_out_h",
+    "total_back_h",
     "stops_out",
     "stops_back",
+    "route_out",
+    "route_back",
     "airline",
+    "seller",
+    "found_date",
     "booking_link",
     "momondo_link",
     "google_flights_link",
@@ -86,6 +98,29 @@ def parse_dt(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def hours(minutes: int | None) -> float | str:
+    return round(minutes / 60, 1) if minutes is not None else ""
+
+
+def ticket_legs(link: str) -> list[tuple[list[str], int]]:
+    """Pileti lennujaamad ja kogukestus (min, koos ümberistumistega) suundade kaupa, nt
+    [(["HEL", "STN", "LTN", "TFS"], 1380), (["TFS", "HEL"], 375)]; [] kui lingis pileti koodi pole."""
+    code = parse_qs(urlparse(link).query).get("t", [""])[0].split("_", 1)[0][2:]
+    legs = TICKET_LEG.findall(code)
+    if not legs or "".join("".join(leg) for leg in legs) != code:
+        return []
+    return [([a[i:i + 3] for i in range(0, len(a), 3)], int(minutes)) for _, _, minutes, a in legs]
+
+
+def ticket_found_date(link: str) -> date | None:
+    """Millal hind leiti (lingi search_date=DDMMYYYY)."""
+    raw = parse_qs(urlparse(link).query).get("search_date", [""])[0]
+    try:
+        return datetime.strptime(raw, "%d%m%Y").date()
+    except ValueError:
+        return None
+
+
 def momondo_link(origin: str, dest: str, out: date, back: date) -> str:
     return f"https://www.momondo.com/flight-search/{origin}-{dest}/{out}/{back}?sort=price_a"
 
@@ -102,8 +137,11 @@ def to_row(item: dict, currency: str) -> dict | None:
     ret = parse_dt(item["return_at"])
     origin = item.get("origin_airport") or item["origin"]
     dest = item.get("destination_airport") or item["destination"]
-    dur_out = item.get("duration_to")
-    dur_back = item.get("duration_back")
+    link = item.get("booking_link", "")
+    legs = ticket_legs(link)
+    if len(legs) != 2:
+        legs = [([], None), ([], None)]
+    (route_out, total_out), (route_back, total_back) = legs
     return {
         "price": item["price"],
         "currency": currency.upper(),
@@ -114,12 +152,18 @@ def to_row(item: dict, currency: str) -> dict | None:
         "return_date": ret.date(),
         "return_time": ret.strftime("%H:%M"),
         "nights": (ret.date() - dep.date()).days,
-        "duration_out_h": round(dur_out / 60, 1) if dur_out is not None else "",
-        "duration_back_h": round(dur_back / 60, 1) if dur_back is not None else "",
+        "duration_out_h": hours(item.get("duration_to")),
+        "duration_back_h": hours(item.get("duration_back")),
+        "total_out_h": hours(total_out),
+        "total_back_h": hours(total_back),
         "stops_out": item.get("transfers", ""),
         "stops_back": item.get("return_transfers", ""),
+        "route_out": "-".join(route_out),
+        "route_back": "-".join(route_back),
         "airline": item.get("airline", ""),
-        "booking_link": item.get("booking_link", ""),
+        "seller": item.get("gate", ""),
+        "found_date": ticket_found_date(link) or "",
+        "booking_link": link,
         "momondo_link": momondo_link(origin, dest, dep.date(), ret.date()),
         "google_flights_link": google_flights_link(origin, dest, dep.date(), ret.date()),
     }
@@ -133,7 +177,7 @@ def passes_filters(row: dict, args: argparse.Namespace) -> bool:
     if args.max_duration is not None:
         limit = args.max_duration
         # Kui kestus puudub, ei saa filtrit kontrollida -> jätame välja.
-        for key in ("duration_out_h", "duration_back_h"):
+        for key in ("total_out_h", "total_back_h"):
             if row[key] == "" or row[key] > limit:
                 return False
     if args.max_stops is not None:
@@ -167,26 +211,25 @@ def search(args: argparse.Namespace, client: TravelpayoutsClient) -> list[dict]:
     destinations = expand_destinations(args.to, regions)
     origins = [o.strip().upper() for o in args.origins.split(",") if o.strip()]
     months = months_between(args.start, args.end)
+    # Vahemälus on kuupäevapaari kohta vaid odavaim pilet, tavaliselt pikk ümberistumistega kombinatsioon.
+    # Kestuse või ümberistumiste filtri korral küsime otselende eraldi, muidu jääksid need selle taha peitu.
+    direct_modes = [False, True] if args.max_duration is not None or args.max_stops is not None else [False]
+    queries = list(itertools.product(origins, destinations, months, direct_modes))
 
     rows: list[dict] = []
-    total = len(origins) * len(destinations) * len(months)
-    n = 0
-    for origin in origins:
-        for dest in destinations:
-            for month in months:
-                n += 1
-                print(f"[{n}/{total}] {origin} -> {dest} {month}", file=sys.stderr)
-                try:
-                    items = client.round_trips(origin, dest, month)
-                except TravelpayoutsError:
-                    raise
-                except Exception as exc:  # võrguviga ühe päringu puhul ei peata kogu otsingut
-                    print(f"  hoiatus: {exc}", file=sys.stderr)
-                    continue
-                for item in items:
-                    row = to_row(item, args.currency)
-                    if row and passes_filters(row, args):
-                        rows.append(row)
+    for n, (origin, dest, month, direct) in enumerate(queries, 1):
+        print(f"[{n}/{len(queries)}] {origin} -> {dest} {month}{' otse' if direct else ''}", file=sys.stderr)
+        try:
+            items = client.round_trips(origin, dest, month, direct=direct)
+        except TravelpayoutsError:
+            raise
+        except Exception as exc:  # võrguviga ühe päringu puhul ei peata kogu otsingut
+            print(f"  hoiatus: {exc}", file=sys.stderr)
+            continue
+        for item in items:
+            row = to_row(item, args.currency)
+            if row and passes_filters(row, args):
+                rows.append(row)
     return cheapest_unique(rows)
 
 
@@ -201,7 +244,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--min-nights", type=int, default=1)
     p.add_argument("--max-nights", type=int, default=30)
     p.add_argument("--max-duration", type=float, default=None,
-                   help="Max lennuaeg tundides ühes suunas (koos ümberistumistega)")
+                   help="Max reisiaeg tundides ühes suunas koos ümberistumiste ja ootamisega")
     p.add_argument("--max-stops", type=int, default=None, help="Max ümberistumisi ühes suunas (0 = otselend)")
     p.add_argument("--max-price", type=float, default=None)
     p.add_argument("--currency", default="eur")
