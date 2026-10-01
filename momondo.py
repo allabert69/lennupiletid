@@ -166,9 +166,10 @@ def _is_search(body: dict, origins: list[str], destinations: list[str], depart: 
 class MomondoClient:
     """Chrome'i aken Momondo otsinguteks: with MomondoClient(profiil) as client: client.round_trips(...)."""
 
-    def __init__(self, profile_dir: Path, domain: str = DOMAIN, per_search: int = RESULTS_PER_SEARCH,
-                 timeout: float = SEARCH_TIMEOUT, pause: float = PAUSE):
+    def __init__(self, profile_dir: Path, show_window: bool = False, domain: str = DOMAIN,
+                 per_search: int = RESULTS_PER_SEARCH, timeout: float = SEARCH_TIMEOUT, pause: float = PAUSE):
         self.profile_dir = profile_dir
+        self.show_window = show_window
         self.domain = domain
         self.per_search = per_search
         self.timeout = timeout
@@ -194,6 +195,15 @@ class MomondoClient:
             self._playwright.stop()
             raise MomondoError(f"Chrome'i ega Edge'i ei õnnestunud käivitada: {error}")
         self.page = self._context.pages[0] if self._context.pages else self._context.new_page()
+        if not self.show_window:
+            # Headless brauseri blokeerib Momondo, seega päris aken lihtsalt minimeeritakse tegumiribale.
+            try:
+                cdp = self._context.new_cdp_session(self.page)
+                window = cdp.send("Browser.getWindowForTarget")
+                cdp.send("Browser.setWindowBounds",
+                         {"windowId": window["windowId"], "bounds": {"windowState": "minimized"}})
+            except PlaywrightError:
+                pass  # aken jääb nähtavaks, otsing töötab ikka
         self.page.on("response", lambda r: self._responses.append(r) if r.url.endswith(POLL_PATH) else None)
         return self
 

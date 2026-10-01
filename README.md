@@ -6,9 +6,10 @@ Otsib odavaid edasi-tagasi lende lähtelennujaamadest (vaikimisi Tallinn, Riia, 
 Andmeallikaid on kaks:
 
 - **Momondo** (vaikimisi). Päris otsing momondo.ee-s, värsked hinnad paljudelt lennufirmadelt ja
-  müüjatelt. Skript avab Chrome'i (või Edge'i) akna ja loeb tulemused samast sisemisest API-st, mida
-  Momondo leht ise kasutab. Peidetud brauseri suunab Momondo robotilehele, seega aken peab otsingu ajal
-  lahti olema. Üks otsing võtab umbes pool minutit.
+  müüjatelt. Skript käivitab Chrome'i (või Edge'i) ja loeb tulemused samast sisemisest API-st, mida
+  Momondo leht ise kasutab. Headless brauseri suunab Momondo robotilehele, seega töötab päris aken,
+  mis on vaikimisi minimeeritud tegumiribale (`--show-browser` näitab seda). Üks otsing võtab umbes
+  pool minutit.
 - **Travelpayouts** (`--source travelpayouts`). [Aviasales Data API](https://support.travelpayouts.com/hc/en-us/articles/203956163)
   vahemälu: kiire ja ilma brauserita, kuid sisaldab ainult hindu, mida keegi on hiljuti otsinud
   (leidmise kuupäev on veerus `found_date`). Populaarsetel suundadel (Kanaarid, Barcelona) piisab,
@@ -68,6 +69,7 @@ python lennud.py --to maroko --start 2026-12-18 --end 2027-01-03 `
 | `--no-self-transfer` | Ainult ühe piletiga ümberistumised (ainult Momondo) |
 | `--refine` | Mitu soodsamat kuupäevapaari täpse otsinguga üle kontrollida, vaikimisi 10 (`0` = kiirem, aga ebatäpsem) |
 | `--source` | `momondo` (vaikimisi) või `travelpayouts` |
+| `--show-browser` | Näita Momondo otsingu Chrome'i akent (vaikimisi minimeeritud) |
 | `--currency` | Valuuta, ainult Travelpayouts (momondo.ee hinnad on eurodes) |
 | `--limit` | Ainult N odavaimat |
 | `--delimiter` | CSV eraldaja, vaikimisi `;` (Eesti lokaadiga Excel) |

@@ -299,7 +299,8 @@ def search_momondo(args: argparse.Namespace, client: momondo.MomondoClient) -> l
         "no_self_transfer": args.no_self_transfer,
     }
     print(f"Momondo: {len(blocks) * len(groups)} paindlikku otsingut (±3 päeva), seejärel kuni {args.refine} "
-          f"soodsamat kuupäevapaari täpse otsinguga. Otsing võtab umbes pool minutit, ära sulge brauseriakent.",
+          f"soodsamat kuupäevapaari täpse otsinguga. Otsing võtab umbes pool minutit; Chrome töötab "
+          f"{'nähtavas aknas' if args.show_browser else 'minimeeritult tegumiribal'}, ära seda sule.",
           file=sys.stderr)
 
     rows: list[dict] = []
@@ -364,6 +365,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Max reisiaeg tundides ühes suunas koos ümberistumiste ja ootamisega")
     p.add_argument("--max-stops", type=int, default=None, help="Max ümberistumisi ühes suunas (0 = otselend)")
     p.add_argument("--max-price", type=float, default=None)
+    p.add_argument("--show-browser", action="store_true",
+                   help="Näita Momondo otsingu Chrome'i akent (vaikimisi minimeeritud)")
     p.add_argument("--no-self-transfer", action="store_true",
                    help="Jäta välja eraldi piletitega ümberistumised (ümberistumine omal riisikol; ainult Momondo)")
     p.add_argument("--refine", type=int, default=10,
@@ -388,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.source == "momondo":
         try:
-            with momondo.MomondoClient(HERE / ".momondo-profile") as client:
+            with momondo.MomondoClient(HERE / ".momondo-profile", show_window=args.show_browser) as client:
                 rows = search_momondo(args, client)
         except momondo.MomondoError as exc:
             print(f"Viga: {exc}", file=sys.stderr)
