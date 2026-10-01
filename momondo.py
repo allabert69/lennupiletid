@@ -275,7 +275,8 @@ class MomondoClient:
                     pass
                 break
         if found is None:
-            if "/flight-search/" not in self.page.url:  # tundmatu vahekontroll: edasised otsingud kukuksid samuti läbi
+            # Tundmatu vahekontroll: ka järgmised otsingud kukuksid läbi, seega lõpetame kohe.
+            if "/flight-search/" not in self.page.url:
                 raise MomondoError(f"Momondo näitab otsingu asemel lehte {self.page.url}")
             raise RuntimeError(f"Momondo ei alustanud otsingut {self.timeout:.0f} s jooksul")
         return found[0], found[1], False
