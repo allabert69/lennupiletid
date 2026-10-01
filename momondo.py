@@ -24,8 +24,9 @@ DOMAIN = "www.momondo.ee"
 FLEX_DAYS = 3  # URL-i "-flexible-3days": ±3 päeva
 MAX_AIRPORTS = 10  # rohkemate lennujaamadega suunab Momondo otsinguvormile
 RESULTS_PER_SEARCH = 500  # odavaimat tulemust otsingu kohta (pärast filtreid)
-SEARCH_TIMEOUT = 150  # s; jätab aega ka robotikontrolli käsitsi lahendamiseks
-PAUSE = 3  # s otsingute vahel
+SEARCH_TIMEOUT = 90  # s; tavaliselt lõpeb otsing 15-35 sekundiga
+CHECK_TIMEOUT = 600  # s turvakontrolli ("Ma ei ole robot") käsitsi lahendamiseks
+PAUSE = 10  # s otsingute vahel, et Momondot liialt ei koormaks
 
 POLL_PATH = "/i/api/search/dynamic/flights/poll"
 POLL_JS = """async ({body, headers}) => {
@@ -197,15 +198,31 @@ class MomondoClient:
         self.page = self._context.pages[0] if self._context.pages else self._context.new_page()
         if not self.show_window:
             # Headless brauseri blokeerib Momondo, seega päris aken lihtsalt minimeeritakse tegumiribale.
-            try:
-                cdp = self._context.new_cdp_session(self.page)
-                window = cdp.send("Browser.getWindowForTarget")
-                cdp.send("Browser.setWindowBounds",
-                         {"windowId": window["windowId"], "bounds": {"windowState": "minimized"}})
-            except PlaywrightError:
-                pass  # aken jääb nähtavaks, otsing töötab ikka
+            self._set_window_state("minimized")
         self.page.on("response", lambda r: self._responses.append(r) if r.url.endswith(POLL_PATH) else None)
         return self
+
+    def _set_window_state(self, state: str) -> None:
+        try:
+            cdp = self._context.new_cdp_session(self.page)
+            window = cdp.send("Browser.getWindowForTarget")
+            cdp.send("Browser.setWindowBounds", {"windowId": window["windowId"], "bounds": {"windowState": state}})
+        except Exception:  # akna olek on ainult mugavus, otsing töötab ka ilma
+            pass
+
+    def _security_check(self) -> None:
+        """Momondo küsib "Ma ei ole robot" kontrolli: näitame akent ja ootame, kuni kasutaja selle lahendab."""
+        print("  Momondo küsib turvakontrolli: lahenda see Chrome'i aknas (\"Ma ei ole robot\", siis Continue). "
+              "Otsing jätkub seejärel ise.", file=sys.stderr)
+        self._set_window_state("normal")
+        self.page.bring_to_front()
+        deadline = time.monotonic() + CHECK_TIMEOUT
+        while "/security/check" in self.page.url:
+            if time.monotonic() > deadline:
+                raise MomondoError("Momondo turvakontroll jäi lahendamata.")
+            self.page.wait_for_timeout(1000)
+        if not self.show_window:
+            self._set_window_state("minimized")
 
     def __exit__(self, *exc_info) -> None:
         try:
@@ -238,6 +255,10 @@ class MomondoClient:
             self.page.wait_for_timeout(1000)
             if "/help/bots" in self.page.url:
                 raise MomondoError("Momondo pidas otsingut robotiks (help/bots.html). Proovi mõne aja pärast uuesti.")
+            if "/security/check" in self.page.url:
+                self._security_check()  # pärast kontrolli suunab Momondo tagasi otsingusse
+                deadline = time.monotonic() + self.timeout
+                continue
             # Eelmise lehe hilinenud vastused ei kuulu siia otsingusse.
             for response in reversed(self._responses):
                 try:
@@ -254,6 +275,8 @@ class MomondoClient:
                     pass
                 break
         if found is None:
+            if "/flight-search/" not in self.page.url:  # tundmatu vahekontroll: edasised otsingud kukuksid samuti läbi
+                raise MomondoError(f"Momondo näitab otsingu asemel lehte {self.page.url}")
             raise RuntimeError(f"Momondo ei alustanud otsingut {self.timeout:.0f} s jooksul")
         return found[0], found[1], False
 

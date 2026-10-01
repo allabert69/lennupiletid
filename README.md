@@ -37,9 +37,11 @@ lennu kaotamine sinu riisiko. Võti `--no-self-transfer` jätab need välja.
 `booking_link` avab momondo.ee-s just selle lennu (lehe ülaosas „Jagatud lend“), kui see on veel müügis.
 `momondo_link` ja `google_flights_link` on sama marsruudi ja kuupäevade üldotsingud.
 
-Kui Momondo peab otsingut robotiks, lõpetab skript ja salvestab seni leitud lennud; proovi mõne aja
-pärast uuesti. Brauseri profiil (küpsised, nõusolekud) säilib kaustas `.momondo-profile`. Momondo
-sisemine API pole avalik ja võib muutuda, siis vajab `momondo.py` kohendamist.
+Kui Momondo küsib turvakontrolli („Ma ei ole robot“), toob skript Chrome'i akna nähtavale: lahenda
+kontroll ja otsing jätkub ise (ootab kuni 10 minutit). Kui Momondo blokeerib otsingu täielikult, lõpetab
+skript ja salvestab seni leitud lennud. Otsingute vahel on 10 s paus, et Momondot liialt ei koormaks.
+Brauseri profiil (küpsised, nõusolekud) säilib kaustas `.momondo-profile`. Momondo sisemine API pole
+avalik ja võib muutuda, siis vajab `momondo.py` kohendamist.
 
 ## Seadistus
 
