@@ -32,7 +32,7 @@ class FakeClient:
 def run(argv, data, direct_data=()):
     args = lennud.parse_args(argv)
     client = FakeClient(data, direct_data)
-    return lennud.search(args, client), client
+    return lennud.search_travelpayouts(args, client), client
 
 
 def test_expand_region_and_codes():
@@ -57,7 +57,7 @@ def test_filters_nights_dates_duration_and_sorting():
                         "--min-nights", "5", "--max-nights", "8", "--max-duration", "8"], data)
     assert [(r["origin"], r["price"]) for r in rows] == [("HEL", 110), ("TLL", 150)]
     assert rows[0]["nights"] == 6
-    assert "momondo.com/flight-search/HEL-BCN/2026-11-10/2026-11-16" in rows[0]["momondo_link"]
+    assert "momondo.ee/flight-search/HEL-BCN/2026-11-10/2026-11-16" in rows[0]["momondo_link"]
     assert len(client.calls) == 6  # 3 lähtekohta x 1 sihtkoht x 1 kuu x (tava + otse)
 
 

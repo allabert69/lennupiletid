@@ -1,4 +1,4 @@
-"""Odavate edasi-tagasi lennupiletite otsija.
+"""Odavate edasi-tagasi lennupiletite otsija (vaikimisi Momondo, valikuliselt Travelpayouts).
 
 Näide:
     python lennud.py --to kanaarid,BCN --start 2026-11-01 --end 2026-12-15 \
@@ -18,6 +18,7 @@ from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
+import momondo
 from travelpayouts import TravelpayoutsClient, TravelpayoutsError
 
 HERE = Path(__file__).resolve().parent
@@ -45,6 +46,7 @@ CSV_COLUMNS = [
     "stops_back",
     "route_out",
     "route_back",
+    "self_transfer",
     "airline",
     "seller",
     "found_date",
@@ -122,7 +124,7 @@ def ticket_found_date(link: str) -> date | None:
 
 
 def momondo_link(origin: str, dest: str, out: date, back: date) -> str:
-    return f"https://www.momondo.com/flight-search/{origin}-{dest}/{out}/{back}?sort=price_a"
+    return momondo.search_url([origin], [dest], out, back)
 
 
 def google_flights_link(origin: str, dest: str, out: date, back: date) -> str:
@@ -160,11 +162,61 @@ def to_row(item: dict, currency: str) -> dict | None:
         "stops_back": item.get("return_transfers", ""),
         "route_out": "-".join(route_out),
         "route_back": "-".join(route_back),
+        "self_transfer": "",  # Travelpayouts seda ei ütle
         "airline": item.get("airline", ""),
         "seller": item.get("gate", ""),
         "found_date": ticket_found_date(link) or "",
         "booking_link": link,
         "momondo_link": momondo_link(origin, dest, dep.date(), ret.date()),
+        "google_flights_link": google_flights_link(origin, dest, dep.date(), ret.date()),
+    }
+
+
+def route_of(segments: list[dict]) -> str:
+    """'HEL-BGY-MXP-RAK': lennujaama vahetus (BGY -> MXP) jääb näha kahe järjestikuse koodina."""
+    airports: list[str] = []
+    for s in segments:
+        if not airports or airports[-1] != s["origin"]:
+            airports.append(s["origin"])
+        airports.append(s["destination"])
+    return "-".join(airports)
+
+
+def momondo_row(trip: dict) -> dict:
+    out, back = trip["legs"]
+    dep = datetime.fromisoformat(out["departure"])
+    ret = datetime.fromisoformat(back["departure"])
+    origin = out["segments"][0]["origin"]
+    dest = out["segments"][-1]["destination"]
+    # Tagasilend võib alata/lõppeda sama linna teises lennujaamas; siis peab link otsima mõlemat.
+    link_origins = list(dict.fromkeys([origin, back["segments"][-1]["destination"]]))
+    link_dests = list(dict.fromkeys([dest, back["segments"][0]["origin"]]))
+    airlines = dict.fromkeys(s["airline"] for leg in trip["legs"] for s in leg["segments"])
+    return {
+        "price": trip["price"],
+        "currency": trip["currency"],
+        "origin": origin,
+        "destination": dest,
+        "depart_date": dep.date(),
+        "depart_time": dep.strftime("%H:%M"),
+        "return_date": ret.date(),
+        "return_time": ret.strftime("%H:%M"),
+        "nights": (ret.date() - dep.date()).days,
+        "duration_out_h": hours(sum(s["duration"] for s in out["segments"])),
+        "duration_back_h": hours(sum(s["duration"] for s in back["segments"])),
+        "total_out_h": hours(out["duration"]),
+        "total_back_h": hours(back["duration"]),
+        "stops_out": len(out["segments"]) - 1,
+        "stops_back": len(back["segments"]) - 1,
+        "route_out": route_of(out["segments"]),
+        "route_back": route_of(back["segments"]),
+        "self_transfer": "yes" if trip["self_transfer"] else "",
+        "airline": ", ".join(airlines),
+        "seller": trip["seller"],
+        "found_date": date.today(),
+        "booking_link": momondo.search_url(link_origins, link_dests, dep.date(), ret.date(),
+                                           result_id=trip["result_id"]),
+        "momondo_link": momondo.search_url(link_origins, link_dests, dep.date(), ret.date()),
         "google_flights_link": google_flights_link(origin, dest, dep.date(), ret.date()),
     }
 
@@ -186,6 +238,8 @@ def passes_filters(row: dict, args: argparse.Namespace) -> bool:
                 return False
     if args.max_price is not None and row["price"] > args.max_price:
         return False
+    if args.no_self_transfer and row["self_transfer"]:
+        return False
     return True
 
 
@@ -206,10 +260,71 @@ def write_csv(rows: list[dict], path: str, delimiter: str) -> None:
         writer.writerows(rows)
 
 
-def search(args: argparse.Namespace, client: TravelpayoutsClient) -> list[dict]:
+def parse_origins(raw: str) -> list[str]:
+    return [o.strip().upper() for o in raw.split(",") if o.strip()]
+
+
+def best_date_pairs(rows: list[dict], n: int) -> list[tuple[date, date]]:
+    """n kuupäevapaari, mille odavaim lend on kõige soodsam."""
+    best: dict[tuple[date, date], float] = {}
+    for r in rows:
+        key = (r["depart_date"], r["return_date"])
+        best[key] = min(best.get(key, r["price"]), r["price"])
+    return sorted(best, key=lambda k: (best[k], k))[:n]
+
+
+def momondo_trips(client: momondo.MomondoClient, args: argparse.Namespace, origins: list[str],
+                  destinations: list[str], depart: date, return_: date, fs: str, flex: bool) -> list[dict]:
+    """Ühe Momondo otsingu filtritele vastavad read; blokeerimise korral MomondoError."""
+    try:
+        trips = client.round_trips(origins, destinations, depart, return_, fs, flex=flex)
+    except momondo.MomondoError:
+        raise
+    except Exception as exc:  # üks ebaõnnestunud otsing ei peata ülejäänuid
+        print(f"  hoiatus: {exc}", file=sys.stderr)
+        return []
+    rows = [row for row in map(momondo_row, trips) if passes_filters(row, args)]
+    print(f"  {len(trips)} lendu, neist sobivad {len(rows)}", file=sys.stderr)
+    return rows
+
+
+def search_momondo(args: argparse.Namespace, client: momondo.MomondoClient) -> list[dict]:
+    destinations = expand_destinations(args.to, load_regions())
+    origins = parse_origins(args.origins)
+    groups = list(itertools.product(momondo.chunks(origins), momondo.chunks(destinations)))
+    blocks = momondo.flex_blocks(max(args.start, date.today()), args.end, args.min_nights, args.max_nights)
+    common = {
+        "max_leg_minutes": round(args.max_duration * 60) if args.max_duration is not None else None,
+        "max_stops": args.max_stops,
+        "no_self_transfer": args.no_self_transfer,
+    }
+    print(f"Momondo: {len(blocks) * len(groups)} paindlikku otsingut (±3 päeva), seejärel kuni {args.refine} "
+          f"soodsamat kuupäevapaari täpse otsinguga. Otsing võtab umbes pool minutit, ära sulge brauseriakent.",
+          file=sys.stderr)
+
+    rows: list[dict] = []
+    try:
+        for n, (block, (orig, dest)) in enumerate(itertools.product(blocks, groups), 1):
+            print(f"[{n}/{len(blocks) * len(groups)}] {','.join(orig)} -> {','.join(dest)}  "
+                  f"väljumine {block.depart_dates[0]:%d.%m}–{block.depart_dates[-1]:%d.%m}, "
+                  f"naasmine {block.return_dates[0]:%d.%m}–{block.return_dates[-1]:%d.%m}", file=sys.stderr)
+            fs = momondo.filters(**common, block=block, min_nights=args.min_nights, max_nights=args.max_nights)
+            rows += momondo_trips(client, args, orig, dest, block.depart, block.return_, fs, flex=True)
+        # Paindlik otsing uurib iga kuupäevapaari pinnapealselt; soodsamad paarid otsime täpse kuupäevaga uuesti.
+        exact = list(itertools.product(best_date_pairs(rows, args.refine), groups))
+        for n, ((depart, return_), (orig, dest)) in enumerate(exact, 1):
+            print(f"[täpne {n}/{len(exact)}] {','.join(orig)} -> {','.join(dest)}  "
+                  f"{depart:%d.%m}–{return_:%d.%m}", file=sys.stderr)
+            rows += momondo_trips(client, args, orig, dest, depart, return_, momondo.filters(**common), flex=False)
+    except momondo.MomondoError as exc:  # Momondo blokeeris: lõpetame, aga seni leitu salvestatakse
+        print(f"Viga: {exc}", file=sys.stderr)
+    return cheapest_unique(rows)
+
+
+def search_travelpayouts(args: argparse.Namespace, client: TravelpayoutsClient) -> list[dict]:
     regions = load_regions()
     destinations = expand_destinations(args.to, regions)
-    origins = [o.strip().upper() for o in args.origins.split(",") if o.strip()]
+    origins = parse_origins(args.origins)
     months = months_between(args.start, args.end)
     # Vahemälus on kuupäevapaari kohta vaid odavaim pilet, tavaliselt pikk ümberistumistega kombinatsioon.
     # Kestuse või ümberistumiste filtri korral küsime otselende eraldi, muidu jääksid need selle taha peitu.
@@ -234,7 +349,9 @@ def search(args: argparse.Namespace, client: TravelpayoutsClient) -> list[dict]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Odavate edasi-tagasi lendude otsing (Travelpayouts/Aviasales).")
+    p = argparse.ArgumentParser(description="Odavate edasi-tagasi lendude otsing (Momondo või Travelpayouts).")
+    p.add_argument("--source", choices=["momondo", "travelpayouts"], default="momondo",
+                   help="momondo: päris otsing Chrome'iga (vaikimisi); travelpayouts: kiire, kuid hõre vahemälu")
     p.add_argument("--to", required=True,
                    help="Sihtkohad komadega: IATA koodid ja/või regioonid regions.json-ist, nt 'kanaarid,BCN,LIS'")
     p.add_argument("--origins", default=",".join(DEFAULT_ORIGINS),
@@ -247,7 +364,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Max reisiaeg tundides ühes suunas koos ümberistumiste ja ootamisega")
     p.add_argument("--max-stops", type=int, default=None, help="Max ümberistumisi ühes suunas (0 = otselend)")
     p.add_argument("--max-price", type=float, default=None)
-    p.add_argument("--currency", default="eur")
+    p.add_argument("--no-self-transfer", action="store_true",
+                   help="Jäta välja eraldi piletitega ümberistumised (ümberistumine omal riisikol; ainult Momondo)")
+    p.add_argument("--refine", type=int, default=10,
+                   help="Mitu soodsamat kuupäevapaari täpse otsinguga üle kontrollida (Momondo; 0 = ei kontrolli)")
+    p.add_argument("--currency", default="eur", help="Valuuta (ainult Travelpayouts; momondo.ee hinnad on eurodes)")
     p.add_argument("--limit", type=int, default=None, help="Kirjuta CSV-sse ainult N odavaimat")
     p.add_argument("-o", "--output", default="lennud.csv")
     p.add_argument("--delimiter", default=";", help="CSV eraldaja (vaikimisi ';' – Eesti Excel)")
@@ -257,23 +378,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p.error("--end peab olema hiljem kui --start")
     if args.min_nights > args.max_nights:
         p.error("--min-nights ei tohi olla suurem kui --max-nights")
+    if (args.end - args.start).days < args.min_nights:
+        p.error("--start ja --end vahele ei mahu --min-nights ööd")
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv(HERE / ".env")
     args = parse_args(argv)
-    token = args.token or os.environ.get("TRAVELPAYOUTS_TOKEN")
-    if not token:
-        print("Puudub API token: pane TRAVELPAYOUTS_TOKEN .env faili või kasuta --token.", file=sys.stderr)
-        return 2
-
-    client = TravelpayoutsClient(token, currency=args.currency)
-    try:
-        rows = search(args, client)
-    except TravelpayoutsError as exc:
-        print(f"Viga: {exc}", file=sys.stderr)
-        return 1
+    if args.source == "momondo":
+        try:
+            with momondo.MomondoClient(HERE / ".momondo-profile") as client:
+                rows = search_momondo(args, client)
+        except momondo.MomondoError as exc:
+            print(f"Viga: {exc}", file=sys.stderr)
+            return 1
+    else:
+        token = args.token or os.environ.get("TRAVELPAYOUTS_TOKEN")
+        if not token:
+            print("Puudub API token: pane TRAVELPAYOUTS_TOKEN .env faili või kasuta --token.", file=sys.stderr)
+            return 2
+        client = TravelpayoutsClient(token, currency=args.currency)
+        try:
+            rows = search_travelpayouts(args, client)
+        except TravelpayoutsError as exc:
+            print(f"Viga: {exc}", file=sys.stderr)
+            return 1
 
     if args.limit:
         rows = rows[: args.limit]

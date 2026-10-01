@@ -4,3 +4,4 @@ __pycache__/
 .env
 *.csv
 kasuread.txt
+.momondo-profile/
