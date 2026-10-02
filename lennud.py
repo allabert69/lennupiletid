@@ -26,9 +26,16 @@ DEFAULT_ORIGINS = ["TLL", "RIX", "HEL"]
 
 # Otsing, mis käivitub, kui lennud.py käivitada ilma argumentideta (nt VS Code'i Run-nupuga).
 # Samad võtmed mis käsureal (muud võtmed: python lennud.py --help); käsurea argumentidega seda ei kasutata.
-DEFAULT_SEARCH = """
-    --to maroko --start 2026-12-18 --end 2027-01-03
-    --min-nights 3 --max-nights 7 --max-duration 15 -o maroko.csv
+target = "kanaarid"
+DEFAULT_SEARCH = f"""
+    --to {target} 
+    --start 2026-12-18 
+    --end 2027-01-03
+    --min-nights 3 
+    --max-nights 8 
+    --max-duration 15 
+    --no-self-transfer
+    -o {target}.csv
 """.split()
 
 # Aviasalesi lingi t= parameeter kirjeldab konkreetset piletit: lennufirma (2 märki), siis iga suuna kohta
