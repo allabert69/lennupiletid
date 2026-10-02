@@ -24,6 +24,13 @@ from travelpayouts import TravelpayoutsClient, TravelpayoutsError
 HERE = Path(__file__).resolve().parent
 DEFAULT_ORIGINS = ["TLL", "RIX", "HEL"]
 
+# Otsing, mis käivitub, kui lennud.py käivitada ilma argumentideta (nt VS Code'i Run-nupuga).
+# Samad võtmed mis käsureal (muud võtmed: python lennud.py --help); käsurea argumentidega seda ei kasutata.
+DEFAULT_SEARCH = """
+    --to maroko --start 2026-12-18 --end 2027-01-03
+    --min-nights 3 --max-nights 7 --max-duration 15 -o maroko.csv
+""".split()
+
 # Aviasalesi lingi t= parameeter kirjeldab konkreetset piletit: lennufirma (2 märki), siis iga suuna kohta
 # väljumine ja saabumine (kohalik aeg Unix-sekunditena), kestus minutites ja lennujaamad; lõpus _<räsi>_<hind>.
 TICKET_LEG = re.compile(r"(\d{10})(\d{10})(\d{6})((?:[A-Z]{3})+)")
@@ -419,4 +426,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:] or DEFAULT_SEARCH))

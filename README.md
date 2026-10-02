@@ -59,6 +59,9 @@ python lennud.py --to maroko --start 2026-12-18 --end 2027-01-03 `
     --min-nights 3 --max-nights 7 --max-duration 15 -o maroko.csv
 ```
 
+Ilma argumentideta (`python lennud.py` või VS Code'i Run-nupp) käivitub otsing `DEFAULT_SEARCH`-ist
+faili `lennud.py` alguses; muuda seal väärtusi nagu käsureal.
+
 | Argument | Tähendus |
 |---|---|
 | `--to` | IATA koodid ja/või regioonid `regions.json`-ist (nt `kanaarid`, `kreeka`, `tai`) |
