@@ -10,22 +10,32 @@ def days(first, last):
     return tuple(first + timedelta(days=i) for i in range((last - first).days + 1))
 
 
+def raw_segment(airline, origin, dest, departure, arrival, minutes):
+    return {"airline": airline, "origin": origin, "destination": dest, "departure": f"{departure}:00",
+            "arrival": f"{arrival}:00", "duration": minutes}
+
+
+def raw_leg(departure, arrival, minutes, *segment_ids):
+    return {"departure": f"{departure}:00", "arrival": f"{arrival}:00", "duration": minutes,
+            "segments": [{"id": s} for s in segment_ids]}
+
+
 def payload():
     """Momondo poll-vastuse lühendatud kuju: tulemused viitavad lõikudele (legs) ja need segmentidele."""
-    segments = {
-        "s1": {"airline": "FR", "origin": "HEL", "destination": "BGY", "duration": 190},
-        "s2": {"airline": "U2", "origin": "MXP", "destination": "RAK", "duration": 150},  # lennujaama vahetus
-        "s3": {"airline": "FR", "origin": "RAK", "destination": "HEL", "duration": 400},
-        "s4": {"airline": "BT", "origin": "TLL", "destination": "CDG", "duration": 200},
-        "s5": {"airline": "AT", "origin": "CDG", "destination": "CMN", "duration": 190},
-        "s6": {"airline": "AT", "origin": "CMN", "destination": "CDG", "duration": 180},
-        "s7": {"airline": "BT", "origin": "CDG", "destination": "TLL", "duration": 190},
+    segments = {  # kohalikud kellaajad: HEL, TLL UTC+2; BGY, MXP, CDG UTC+1; RAK, CMN UTC+0
+        "s1": raw_segment("FR", "HEL", "BGY", "2026-12-20T22:45", "2026-12-21T00:55", 190),
+        "s2": raw_segment("U2", "MXP", "RAK", "2026-12-21T12:35", "2026-12-21T14:05", 150),  # lennujaama vahetus
+        "s3": raw_segment("FR", "RAK", "HEL", "2026-12-27T15:00", "2026-12-27T23:40", 400),
+        "s4": raw_segment("BT", "TLL", "CDG", "2026-12-21T07:00", "2026-12-21T09:20", 200),
+        "s5": raw_segment("AT", "CDG", "CMN", "2026-12-21T12:50", "2026-12-21T15:00", 190),
+        "s6": raw_segment("AT", "CMN", "CDG", "2026-12-26T09:00", "2026-12-26T13:00", 180),
+        "s7": raw_segment("BT", "CDG", "TLL", "2026-12-26T16:10", "2026-12-26T20:20", 190),
     }
     legs = {
-        "out1": {"departure": "2026-12-20T22:45:00", "duration": 1040, "segments": [{"id": "s1"}, {"id": "s2"}]},
-        "back1": {"departure": "2026-12-27T15:00:00", "duration": 400, "segments": [{"id": "s3"}]},
-        "out2": {"departure": "2026-12-21T07:00:00", "duration": 600, "segments": [{"id": "s4"}, {"id": "s5"}]},
-        "back2": {"departure": "2026-12-26T09:00:00", "duration": 560, "segments": [{"id": "s6"}, {"id": "s7"}]},
+        "out1": raw_leg("2026-12-20T22:45", "2026-12-21T14:05", 1040, "s1", "s2"),
+        "back1": raw_leg("2026-12-27T15:00", "2026-12-27T23:40", 400, "s3"),
+        "out2": raw_leg("2026-12-21T07:00", "2026-12-21T15:00", 600, "s4", "s5"),
+        "back2": raw_leg("2026-12-26T09:00", "2026-12-26T20:20", 560, "s6", "s7"),
     }
 
     def result(rid, prices, leg_ids, warnings=(), provider="KIWIVILCC"):
@@ -73,6 +83,35 @@ def test_momondo_row():
     assert row["momondo_link"] == "https://www.momondo.ee/flight-search/HEL-RAK/2026-12-20/2026-12-27?sort=price_a"
 
 
+def test_duration_from_local_times_and_time_zones():
+    def minutes(origin, dest, departure, arrival, momondo_minutes=1):
+        return momondo.duration({"departure": departure, "arrival": arrival, "duration": momondo_minutes},
+                                origin, dest)
+
+    assert minutes("HEL", "RAK", "2027-01-20T09:30:00", "2027-01-20T13:00:00") == 330  # Maroko UTC+0, HEL UTC+2
+    # Suveaja algus 28.03.2027 (kell 2 -> 3): sama ajavööndi lend on tund lühem, kui kellaajad näitavad.
+    assert minutes("MAD", "AGP", "2027-03-28T00:30:00", "2027-03-28T03:30:00") == 120
+    assert minutes("HEL", "XXX", "2027-01-20T09:30:00", "2027-01-20T13:00:00", 270) == 270  # tundmatu lennujaam
+    assert minutes("HEL", "RAK", "2027-01-20T09:30:00", "2027-01-20T07:00:00", 270) == 270  # vigased kellaajad
+
+
+def test_morocco_durations_follow_time_zones():
+    # Päris Finnairi lend (jaanuar 2027). Momondo arvestab Marokos veel UTC+1, kuigi seal on alates
+    # 20.09.2026 UTC+0: tema järgi kestab lend Agadiri 4 h 50 min ja tagasi 6 h 40 min.
+    p = {
+        "results": [{"type": "core", "resultId": "x", "legs": [{"id": "out"}, {"id": "back"}],
+                     "bookingOptions": [{"providerCode": "FINNAIR",
+                                         "displayPrice": {"price": 484, "currency": "EUR"}}]}],
+        "legs": {"out": raw_leg("2027-01-20T11:35", "2027-01-20T15:25", 290, "s1"),
+                 "back": raw_leg("2027-01-27T16:15", "2027-01-27T23:55", 400, "s2")},
+        "segments": {"s1": raw_segment("AY", "HEL", "AGA", "2027-01-20T11:35", "2027-01-20T15:25", 290),
+                     "s2": raw_segment("AY", "AGA", "HEL", "2027-01-27T16:15", "2027-01-27T23:55", 400)},
+    }
+    row = lennud.momondo_row(momondo.parse_results(p)[0])
+    assert (row["total_out_h"], row["total_back_h"]) == (5.8, 5.7)  # 5 h 50 min ja 5 h 40 min
+    assert (row["duration_out_h"], row["duration_back_h"]) == (5.8, 5.7)
+
+
 @pytest.mark.parametrize("start, end, min_nights, max_nights", [
     (date(2026, 12, 18), date(2027, 1, 3), 3, 7),
     (date(2026, 11, 1), date(2026, 12, 15), 5, 10),
@@ -103,7 +142,7 @@ def test_filters():
                               days(date(2026, 12, 21), date(2026, 12, 22)))
     assert momondo.filters(900, 1, True, block=block, min_nights=3, max_nights=7) == (
         "baditin=baditin;flexdepart=20261218,20261219;flexreturn=20261221,20261222;triplength=3-4;"
-        "legdur=-900;stops=0,1;virtualinterline=-virtualinterline")
+        "legdur=-960;stops=0,1;virtualinterline=-virtualinterline")  # reisiajale tund varu
     assert momondo.filters(max_stops=2) == "baditin=baditin"  # 2+ ümberistumist kontrollime ise
 
 
@@ -172,7 +211,7 @@ def test_search_momondo_filters_and_dedups():
     flex = [c for c in client.calls if c[4]]
     assert len(flex) == 3  # 3 kuupäevaplokki x 1 lähte- x 1 sihtrühm
     assert all(c[0] == ["TLL", "HEL"] and c[1] == ["RAK", "CMN"] for c in client.calls)
-    assert all("legdur=-900" in c[5] and "virtualinterline=-virtualinterline" in c[5] for c in client.calls)
+    assert all("legdur=-960" in c[5] and "virtualinterline=-virtualinterline" in c[5] for c in client.calls)
 
 
 def test_exact_search_refines_cheapest_date_pairs():

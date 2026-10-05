@@ -30,6 +30,13 @@ Filtrid (kuupäevad, ööd, `--max-duration`, `--max-stops`, `--no-self-transfer
 nii et iga otsingu 500 odavaima tulemuse hulka ei jää sobimatuid lende. Iga lennujaamade ja
 kuupäevapaari kohta jääb CSV-sse odavaim pilet. Maroko näide (3 + 10 otsingut) võtab umbes 6 minutit.
 
+Lendude kestused arvutab skript ise kohalikest väljumis- ja saabumisaegadest ning lennujaamade
+ajavöönditest. Momondo enda kestused on valed, kui tema ajavööndi andmed on vananenud: Maroko läks
+20.09.2026 üle GMT-le, Momondo arvestab endiselt UTC+1 ja näitab Marokosse tund lühemat, tagasi tund
+pikemat lendu. Seepärast saab Momondo reisiaja filter tund varu ja täpse `--max-duration` piiri kontrollib
+skript ise. Kui mõni riik oma ajavööndit muudab, uuenda ajavööndite andmeid
+(`.\.venv\Scripts\python.exe -m pip install -U tzdata`).
+
 Odavaimad pakkumised on sageli **self-transfer** piletid (veerg `self_transfer`): eraldi piletid, mille
 vahel tuleb ise pagas uuesti registreerida ja turvakontroll läbida. Kui esimene lend hilineb, on järgmise
 lennu kaotamine sinu riisiko. Võti `--no-self-transfer` jätab need välja.

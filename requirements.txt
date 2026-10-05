@@ -1,3 +1,5 @@
 requests>=2.31
 playwright>=1.45
+airportsdata
+tzdata>=2026.5  # sisaldab Maroko üleminekut GMT-le (20.09.2026)
 pytest>=8

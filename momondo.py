@@ -16,9 +16,12 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
+
+import airportsdata
 
 DOMAIN = "www.momondo.ee"
 FLEX_DAYS = 3  # URL-i "-flexible-3days": ±3 päeva
@@ -27,6 +30,10 @@ RESULTS_PER_SEARCH = 500  # odavaimat tulemust otsingu kohta (pärast filtreid)
 SEARCH_TIMEOUT = 90  # s; tavaliselt lõpeb otsing 15-35 sekundiga
 CHECK_TIMEOUT = 600  # s turvakontrolli ("Ma ei ole robot") käsitsi lahendamiseks
 PAUSE = 10  # s otsingute vahel, et Momondot liialt ei koormaks
+LEGDUR_SLACK = 60  # min varu Momondo reisiaja filtrile, sest Momondo enda kestused võivad olla tund valed
+
+# Lennujaama ajavöönd (IATA -> nt "Africa/Casablanca"), et kestused ise kohalikest kellaaegadest arvutada.
+AIRPORT_TZ = {code: info["tz"] for code, info in airportsdata.load("IATA").items()}
 
 POLL_PATH = "/i/api/search/dynamic/flights/poll"
 POLL_JS = """async ({body, headers}) => {
@@ -92,7 +99,8 @@ def filters(max_leg_minutes: int | None = None, max_stops: int | None = None, no
             f"triplength={min_nights}-{min(max_nights, longest)}",
         ]
     if max_leg_minutes is not None:
-        parts.append(f"legdur=-{max_leg_minutes}")
+        # Momondo filtreerib oma (vahel tund valede) kestuste järgi; täpse piiri kontrollib lennud.py ise.
+        parts.append(f"legdur=-{max_leg_minutes + LEGDUR_SLACK}")
     if max_stops is not None and max_stops < 2:  # Momondo valikud on 0, 1 ja 2+
         parts.append("stops=" + ",".join(str(n) for n in range(max_stops + 1)))
     if no_self_transfer:
@@ -109,6 +117,23 @@ def search_url(origins: list[str], destinations: list[str], depart: date, return
         path += f"/f{result_id}"
     query = "sort=price_a" + (f"&fs={quote(fs, safe='')}" if fs else "")
     return f"https://{domain}{path}?{query}"
+
+
+def duration(item: dict, origin: str, destination: str) -> int:
+    """Lennu või lõigu kestus minutites kohalikest kellaaegadest ja lennujaamade ajavöönditest.
+
+    Momondo enda kestused on valed, kui tema ajavööndi andmed on vananenud: Maroko läks 20.09.2026 üle GMT-le,
+    Momondo arvestab endiselt UTC+1 ja näitab Marokosse tund lühemat, tagasi tund pikemat lendu. Momondo kestus
+    jääb alles ainult siis, kui lennujaama ajavöönd pole teada või kellaajad on vigased.
+    """
+    try:
+        start = datetime.fromisoformat(item["departure"]).replace(tzinfo=ZoneInfo(AIRPORT_TZ[origin]))
+        end = datetime.fromisoformat(item["arrival"]).replace(tzinfo=ZoneInfo(AIRPORT_TZ[destination]))
+    except KeyError:  # ka ZoneInfoNotFoundError
+        return item["duration"]
+    # timestamp(), sest sama ajavööndi aegade lahutamine jätaks vahepealse suveaja vahetuse arvestamata
+    minutes = round((end.timestamp() - start.timestamp()) / 60)
+    return minutes if minutes > 0 else item["duration"]
 
 
 def parse_results(payload: dict) -> list[dict]:
@@ -129,12 +154,12 @@ def parse_results(payload: dict) -> list[dict]:
                 segs = [segments[s["id"]] for s in leg["segments"]]
                 trip_legs.append({
                     "departure": leg["departure"],
-                    "duration": leg["duration"],
+                    "duration": duration(leg, segs[0]["origin"], segs[-1]["destination"]),
                     "segments": [{
                         "airline": (airlines.get(s["airline"]) or {}).get("name", s["airline"]),
                         "origin": s["origin"],
                         "destination": s["destination"],
-                        "duration": s["duration"],
+                        "duration": duration(s, s["origin"], s["destination"]),
                     } for s in segs],
                 })
             provider = option.get("providerCode", "")
@@ -148,7 +173,7 @@ def parse_results(payload: dict) -> list[dict]:
                 or any(s.get("hasSelfTransfer") for ref in result["legs"] for s in ref.get("segments", [])),
                 "legs": trip_legs,
             })
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, IndexError):
             continue
     return trips
 
