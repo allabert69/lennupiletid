@@ -22,18 +22,23 @@ import momondo
 from travelpayouts import TravelpayoutsClient, TravelpayoutsError
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_ORIGINS = ["TLL", "RIX", "HEL"]
+DEFAULT_ORIGINS = [
+    "TLL", 
+    "RIX", 
+    "HEL"
+    ]
 
 # Otsing, mis käivitub, kui lennud.py käivitada ilma argumentideta (nt VS Code'i Run-nupuga).
 # Samad võtmed mis käsureal (muud võtmed: python lennud.py --help); käsurea argumentidega seda ei kasutata.
-target = "kanaarid"
+target = "maroko"
 DEFAULT_SEARCH = f"""
     --to {target} 
-    --start 2026-12-18 
-    --end 2027-01-03
+    --start 2027-04-09 
+    --end 2027-04-18
     --min-nights 3 
     --max-nights 8 
     --max-duration 15 
+    --no-self-transfer
     -o {target}.csv
 """.split()
 
