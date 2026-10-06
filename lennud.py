@@ -34,7 +34,6 @@ DEFAULT_SEARCH = f"""
     --min-nights 3 
     --max-nights 8 
     --max-duration 15 
-    --no-self-transfer
     -o {target}.csv
 """.split()
 
